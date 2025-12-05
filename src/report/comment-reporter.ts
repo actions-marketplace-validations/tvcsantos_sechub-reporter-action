@@ -3,13 +3,16 @@ import { GitHubPRCommenter } from '../github/comment'
 import { ReportResult } from '../model/report-result'
 
 export class CommentReporter implements Reporter {
-  private gitHubPRCommenter: GitHubPRCommenter
+  maxSize = null
 
-  constructor(gitHubPRCommenter: GitHubPRCommenter) {
-    this.gitHubPRCommenter = gitHubPRCommenter
-  }
+  constructor(
+    private readonly gitHubPRCommenter: GitHubPRCommenter,
+    private readonly commentOnSuccess: boolean
+  ) {}
 
   async report(data: ReportResult): Promise<void> {
-    await this.gitHubPRCommenter.comment(data.report)
+    if (data.failed || this.commentOnSuccess) {
+      await this.gitHubPRCommenter.comment(data.report)
+    }
   }
 }

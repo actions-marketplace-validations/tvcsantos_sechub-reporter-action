@@ -1,19 +1,20 @@
 import * as core from '@actions/core'
-import { ContextExtensions } from './utils'
 import { GitHub } from '@actions/github/lib/utils'
 import { Context } from '@actions/github/lib/context'
+import { ExtendedContext } from './extended-context'
+import type { RestEndpointMethodTypes } from '@octokit/plugin-rest-endpoint-methods/dist-types/generated/parameters-and-response-types'
+
+type Conclusion =
+  RestEndpointMethodTypes['checks']['update']['parameters']['conclusion']
 
 export class GitHubCheckCreator {
-  private readonly octokit: InstanceType<typeof GitHub>
-  private readonly context: Context
-
-  constructor(octokit: InstanceType<typeof GitHub>, context: Context) {
-    this.octokit = octokit
-    this.context = context
-  }
+  constructor(
+    private readonly octokit: InstanceType<typeof GitHub>,
+    private readonly context: ExtendedContext
+  ) {}
 
   async create(name: string): Promise<GitHubCheck> {
-    const head_sha = ContextExtensions.of(this.context).getSha()
+    const head_sha = this.context.getSha()
 
     core.info(`Creating ${name}...`)
 
@@ -43,22 +44,12 @@ export class GitHubCheckCreator {
 }
 
 export class GitHubCheck {
-  private readonly octokit: InstanceType<typeof GitHub>
-  private readonly context: Context
-  private readonly checkName: string
-  private readonly checkRunId: number
-
   constructor(
-    octokit: InstanceType<typeof GitHub>,
-    context: Context,
-    checkName: string,
-    checkRunId: number
-  ) {
-    this.octokit = octokit
-    this.context = context
-    this.checkName = checkName
-    this.checkRunId = checkRunId
-  }
+    private readonly octokit: InstanceType<typeof GitHub>,
+    private readonly context: Context,
+    private readonly checkName: string,
+    private readonly checkRunId: number
+  ) {}
 
   async pass(summary: string, text: string): Promise<void> {
     return this.finish('success', summary, text)
@@ -81,7 +72,7 @@ export class GitHubCheck {
   }
 
   private async finish(
-    conclusion: string,
+    conclusion: Conclusion,
     summary: string,
     text: string
   ): Promise<void> {

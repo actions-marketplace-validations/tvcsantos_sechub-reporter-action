@@ -14,15 +14,17 @@ jobs:
       matrix:
         modes: [pr-comment, check, summary]
         file: [sechub-result-error.json, sechub-result-ok.json]
+        comment-pr-on-success: [true, false]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: SecHub reporter test
         uses: ./
         with:
           file: ./__tests__/${{ matrix.file }}
           modes: ${{ matrix.modes }}
+          comment-pr-on-success: ${{ matrix.comment-pr-on-success }}
   test-multi-mode:
     strategy:
       matrix:
@@ -30,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: SecHub reporter test
         uses: ./
         with:
@@ -38,18 +40,23 @@ jobs:
           modes: |
             pr-comment
             check
-  test-fail-on-error:
+  test-error-scenarios:
     strategy:
       matrix:
         file: [ sechub-result-error.json, sechub-result-ok.json ]
+        consider-error-on-severities: [ALL, NONE, HIGH, MEDIUM, LOW]
+        fail-on-error: [true, false]
+        pr-filter-mode: [NONE, ENTRY_POINT, CALL_HIERARCHY]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: SecHub reporter test
         uses: ./
         with:
           file: ./__tests__/${{ matrix.file }}
           modes: summary
-          fail-on-error: true
+          fail-on-error: ${{ matrix.fail-on-error }}
+          consider-error-on-severities: ${{ matrix.consider-error-on-severities }}
+          pr-filter-mode: ${{ matrix.pr-filter-mode }}
         continue-on-error: true

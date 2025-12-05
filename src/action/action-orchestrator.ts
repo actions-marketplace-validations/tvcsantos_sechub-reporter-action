@@ -10,30 +10,41 @@ import { SummaryReporter } from '../report/summary-reporter'
 import * as core from '@actions/core'
 import { GitHub } from '@actions/github/lib/utils'
 import { SecHubReportGenerator } from '../report/sechub-report-generator'
+import fs from 'fs/promises'
+import { extendedContext } from '../github/extended-context'
+import { ReportResult } from '../model/report-result'
+import { SecHubReport } from '../model/sechub'
+import { ReportFindingsFilterFactory } from '../report/report-findings-filter-factory'
+
+const FILE_ENCODING = 'utf-8'
 
 export class ActionOrchestrator {
+  private octokit!: InstanceType<typeof GitHub>
   private gitHubCheck: GitHubCheck | null = null
-  private inputs?: Inputs
+  private inputs!: Inputs
 
   private getOctokit(): InstanceType<typeof GitHub> {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion,@typescript-eslint/no-extra-non-null-assertion
-    return github.getOctokit(this.inputs!!.token)
+    return github.getOctokit(this.inputs.token)
   }
 
-  private async getReporter(mode: ModeOption): Promise<Reporter> {
+  private async getReporter(
+    mode: ModeOption,
+    commentPrOnSuccess: boolean
+  ): Promise<Reporter> {
     switch (mode) {
       case ModeOption.PR_COMMENT:
         return new CommentReporter(
           new GitHubPRCommenter(
             APPLICATION_NAME,
-            this.getOctokit(),
-            github.context
-          )
+            this.octokit,
+            extendedContext
+          ),
+          commentPrOnSuccess
         )
       case ModeOption.CHECK: {
         const gitHubCheckCreator = new GitHubCheckCreator(
-          this.getOctokit(),
-          github.context
+          this.octokit,
+          extendedContext
         )
         this.gitHubCheck = await gitHubCheckCreator.create(CHECK_NAME)
         return new CheckReporter(this.gitHubCheck)
@@ -44,27 +55,68 @@ export class ActionOrchestrator {
   }
 
   private async getReporters(): Promise<Reporter[]> {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion,@typescript-eslint/no-extra-non-null-assertion
-    const modes = this.inputs!!.modes
+    const modes = this.inputs.modes
+    const commentPrOnSuccess = this.inputs.commentPrOnSuccess
     const result: Reporter[] = []
     for (const mode of modes) {
-      result.push(await this.getReporter(mode))
+      result.push(await this.getReporter(mode, commentPrOnSuccess))
     }
     return result
   }
 
+  private async parseReport(): Promise<SecHubReport> {
+    const fileContents = await fs.readFile(this.inputs.file, {
+      encoding: FILE_ENCODING
+    })
+    return JSON.parse(fileContents) as SecHubReport
+  }
+
+  private async doReports(
+    reportData: SecHubReport,
+    reporters: Reporter[]
+  ): Promise<boolean> {
+    const reportFindingsFilter = new ReportFindingsFilterFactory(
+      this.octokit,
+      extendedContext,
+      this.inputs
+    ).create()
+
+    const reportGenerator = new SecHubReportGenerator(
+      extendedContext,
+      reportFindingsFilter
+    )
+    const reportResults = new Map<number | null, ReportResult>()
+    let failed = false
+
+    for (const reporter of reporters) {
+      let reportResult = reportResults.get(reporter.maxSize)
+
+      if (reportResult === undefined) {
+        reportResult = await reportGenerator.generateReport(reportData, {
+          maxSize: reporter.maxSize ?? undefined,
+          considerErrorOnSeverities: this.inputs.considerErrorOnSeverities
+        })
+        reportResults.set(reporter.maxSize, reportResult)
+      }
+
+      failed ||= reportResult.failed
+
+      await reporter.report(reportResult)
+    }
+
+    return failed
+  }
+
   async execute(inputs: Inputs): Promise<number> {
     this.inputs = inputs
+    this.octokit = this.getOctokit()
     const reporters = await this.getReporters()
     try {
-      const reportGenerator = new SecHubReportGenerator(github.context)
-      const reportResult = await reportGenerator.generateReport(
-        this.inputs.file
-      )
-      for (const reporter of reporters) {
-        await reporter.report(reportResult)
-      }
-      return reportResult.failed && this.inputs.failOnError ? 1 : 0
+      const report = await this.parseReport()
+
+      const failed = await this.doReports(report, reporters)
+
+      return failed && this.inputs.failOnError ? 1 : 0
     } catch (e) {
       this.gitHubCheck?.cancel()
       throw e
